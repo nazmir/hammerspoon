@@ -30,6 +30,55 @@ local function has4KDisplay()
     return false
 end
 
+-- Toggle Stage Manager
+local function setStageManager(enabled)
+    pcall(function()
+        -- First try using the direct defaults write command
+        local result = os.execute(string.format('defaults write com.apple.WindowManager GloballyEnabled -bool %s', enabled and 'true' or 'false'))
+        
+        -- If the direct method fails, fall back to UI automation
+        if result ~= 0 then
+            hs.osascript.applescript([[
+                tell application "System Events"
+                    -- Open Desktop & Dock settings
+                    tell application "System Settings"
+                        activate
+                        reveal anchor "StageManager" in pane id "com.apple.Desktop-Settings.extension"
+                        delay 1  -- Give it more time to load
+                    end tell
+                    
+                    -- Wait for the window to be available
+                    set maxWait to 10  -- seconds
+                    set waitTime to 0
+                    repeat until (exists window "Desktop & Dock" of process "System Settings") or (waitTime ≥ maxWait)
+                        delay 0.5
+                        set waitTime to waitTime + 0.5
+                    end repeat
+                    
+                    -- Toggle the Stage Manager checkbox
+                    tell process "System Settings"
+                        try
+                            set stageManagerCheckbox to checkbox 1 of group 1 of group 1 of group 2 of splitter group 1 of group 1 of window "Desktop & Dock"
+                            set currentState to value of stageManagerCheckbox as boolean
+                            if currentValue is not (]] .. (enabled and "1" or "0") .. [[) then
+                                click stageManagerCheckbox
+                                delay 0.5  -- Give it time to process the click
+                            end if
+                        on error errMsg
+                            log "Error toggling Stage Manager: " & errMsg
+                        end try
+                    end tell
+                    
+                    -- Close System Settings
+                    if running of application "System Settings" then
+                        tell application "System Settings" to quit
+                    end if
+                end tell
+            ]])
+        end
+    end)
+end
+
 -- Update dock visibility based on display configuration
 local function updateDockVisibility()
     local shouldHide = not has4KDisplay()
@@ -45,13 +94,18 @@ local function updateDockVisibility()
                     tell dock preferences to set autohide to %s
                 end tell
             ]], tostring(shouldHide)))
+            
+            -- Toggle Stage Manager based on dock visibility
+            setStageManager(not shouldHide)
         end)
         
         -- Show notification
         hs.notify.new({
             title = "Dock Auto-Hide",
             subTitle = string.format("Dock will now %s", shouldHide and "hide" or "show"),
-            informativeText = string.format("4K+ display %s", shouldHide and "not detected" or "detected")
+            informativeText = string.format("4K+ display %s. Stage Manager %s.", 
+                shouldHide and "not detected" or "detected",
+                shouldHide and "disabled" or "enabled")
         }):send()
     end
 end
